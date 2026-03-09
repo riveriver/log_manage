@@ -23,6 +23,15 @@ static char *days[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
 // Name of months.
 static char *months[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
 
+static bool system_in_isr(void)
+{
+#if defined(SCB_ICSR_VECTACTIVE_Msk)
+    return ((SCB->ICSR & SCB_ICSR_VECTACTIVE_Msk) != 0U);
+#else
+    return false;
+#endif
+}
+
 uint32_t system_get_time_ms(void)
 {
 #ifdef USE_SYSTIME_RTC
@@ -71,7 +80,7 @@ uint32_t system_get_time_ms(void)
 #ifdef USE_SYSTIME_TICKS
 #if defined(FREERTOS) || defined(USE_FREERTOS) || defined(configUSE_PREEMPTION)
     // 判断是否在中断中
-    if (__get_IPSR() != 0) {
+    if (system_in_isr()) {
         // 在中断
         return (uint32_t)(xTaskGetTickCountFromISR() * portTICK_PERIOD_MS);
     } else {
@@ -80,7 +89,7 @@ uint32_t system_get_time_ms(void)
     }
 #else
     // HAL_GetTick() is not guaranteed to be thread safe, so we must check if we are in an interrupt context.
-    if (__get_IPSR() != 0) {
+    if (system_in_isr()) {
         // In interrupt context, use a safe method to read the tick count.
         // This is a simple example and may not be perfectly accurate under heavy interrupt load.
         uint32_t tick_count;
@@ -93,6 +102,10 @@ uint32_t system_get_time_ms(void)
         return HAL_GetTick();
     }
 #endif
+#endif
+
+    // Fallback to the minimum non-zero UTC Unix timestamp: 1970-01-01 00:00:01 UTC.
+    return 1000U;
 }
 
 uint32_t system_get_time_s(void)
@@ -192,12 +205,11 @@ void systime_adjust(int32_t adjustment)
 // Create a formatted system time similar to strftime().
 size_t systime_str(char *buffer, size_t buflen)
 {
-  extern uint32_t board_get_time_s(void);
   time_t seconds1970;
   struct tm now;
 
   // Get the seconds since 1970 (Unix epoch) from system time.
-  seconds1970 = (time_t)board_get_time_s();
+  seconds1970 = (time_t)system_get_time_s();
 
   // Break the seconds to a time structure.
   _localtime_r(&seconds1970, &now);
@@ -212,12 +224,11 @@ size_t systime_str(char *buffer, size_t buflen)
 // Create a formatted log time similar to strftime().
 size_t systime_log(char *buffer, size_t buflen)
 {
-  extern uint32_t board_get_time_s(void);
   time_t seconds1970;
   struct tm now;
 
   // Get the seconds since 1970 (Unix epoch) from system time.
-  seconds1970 = (time_t)board_get_time_s();
+  seconds1970 = (time_t)system_get_time_s();
 
   // Break the seconds to a time structure.
   _localtime_r(&seconds1970, &now);
