@@ -16,7 +16,6 @@ void systime_set(int64_t systime);
 void systime_adjust(int32_t adjustment);
 size_t systime_str(char *buffer, size_t buflen);
 size_t systime_log(char *buffer, size_t buflen);
-size_t systime_log_rfc5424(char *buffer, size_t buflen);
 
 #ifdef __cplusplus
 }
