@@ -5,6 +5,11 @@
 #include "outputf.h"
 //#include "ethptp.h"
 
+#define USE_SYSTIME_TICKS
+// #define USE_SYSTIME_GPS_EPOCH
+// #define USE_SYSTIME_NTP
+// #define USE_SYSTIME_RTC
+
 #if !defined(__ARMCC_VERSION) && defined (__GNUC__)
 #define _localtime_r localtime_r
 #endif
@@ -17,6 +22,83 @@ static char *days[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
 
 // Name of months.
 static char *months[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+
+uint32_t system_get_time_ms(void)
+{
+#ifdef USE_SYSTIME_RTC
+    // Attempt to read time from RTC. This is more accurate and stable than tick-based methods
+        RTC_TimeTypeDef sTime = {0};
+        RTC_DateTypeDef sDate = {0};
+
+        /* Try to read RTC time/date. If successful, convert to unix ms. */
+        if (HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN) == HAL_OK &&
+            HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN) == HAL_OK)
+        {
+            /* Convert RTC date/time to unix seconds (UTC) */
+            uint16_t year = 2000 + (uint16_t)sDate.Year; /* RTC stores year offset from 2000 */
+            uint8_t month = sDate.Month;
+            uint8_t day = sDate.Date;
+            uint8_t hour = sTime.Hours;
+            uint8_t minute = sTime.Minutes;
+            uint8_t second = sTime.Seconds;
+
+            /* Compute days since 1970-01-01 */
+            uint32_t days = 0;
+            for (uint16_t y = 1970; y < year; ++y)
+            {
+                bool is_leap = ( (y%4==0 && y%100!=0) || (y%400==0) );
+                days += is_leap ? 366U : 365U;
+            }
+
+            uint8_t days_in_month[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+            bool is_leap_year = ( (year%4==0 && year%100!=0) || (year%400==0) );
+            if (is_leap_year) days_in_month[1] = 29;
+
+            for (uint8_t m = 1; m < month; ++m)
+            {
+                days += days_in_month[m-1];
+            }
+
+            days += (uint32_t)(day - 1);
+
+            uint32_t seconds = days * 86400UL + (uint32_t)hour * 3600UL + (uint32_t)minute * 60UL + (uint32_t)second;
+            uint32_t ms = seconds * 1000UL;
+
+            return ms;
+        }
+#endif
+
+#ifdef USE_SYSTIME_TICKS
+#if defined(FREERTOS) || defined(USE_FREERTOS) || defined(configUSE_PREEMPTION)
+    // 判断是否在中断中
+    if (__get_IPSR() != 0) {
+        // 在中断
+        return (uint32_t)(xTaskGetTickCountFromISR() * portTICK_PERIOD_MS);
+    } else {
+        // 任务上下文
+        return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+    }
+#else
+    // HAL_GetTick() is not guaranteed to be thread safe, so we must check if we are in an interrupt context.
+    if (__get_IPSR() != 0) {
+        // In interrupt context, use a safe method to read the tick count.
+        // This is a simple example and may not be perfectly accurate under heavy interrupt load.
+        uint32_t tick_count;
+        do {
+            tick_count = HAL_GetTick();
+        } while (tick_count != HAL_GetTick()); // Ensure we get a stable reading
+        return tick_count;
+    } else {
+        // In task context, we can safely call HAL_GetTick()
+        return HAL_GetTick();
+    }
+#endif
+}
+
+uint32_t system_get_time_s(void)
+{
+    return system_get_time_ms() / 1000U;
+}
 
 // Return the time/date relative to the high precision Ethernet timer.
 static bool systime_shell_date(int argc, char **argv)
@@ -64,26 +146,10 @@ bool systime_is_valid(void)
 int64_t systime_get(void)
 {
   int64_t systime;
-  // HACK
-//   ptptime_t ptptime;
-
-//   // Get the Ethernet time values.
-//   ethptp_get_time(&ptptime);
-
-//   // Get seconds since 1970 (Unix epoch).
-//   systime = (uint64_t) ptptime.tv_sec;
-
-// #ifdef USE_SYSTIME_GPS_EPOCH
-//   // Adjust to time since 1980 (GPS epoch). There was an offset of 315964800 seconds
-//   // between Unix and GPS time when GPS time began, that offset changes each time
-//   // there is a leap second. We currently don't factor in leap seconds.
-//   // See: https://www.andrews.edu/~tzs/timeconv/timealgorithm.html
-//   systime -= 315964800;
-// #endif
-
-//   // Add in the nanosecond value.
-//   systime = (systime * 1000000000) + ptptime.tv_nsec;
-  systime = 946728000000000000;
+  
+  // Get current system time in seconds and convert to nanoseconds.
+  uint32_t seconds = system_get_time_s();
+  systime = (int64_t)seconds * 1000000000LL;
 
   // Return the system time.
   return systime;
@@ -126,18 +192,12 @@ void systime_adjust(int32_t adjustment)
 // Create a formatted system time similar to strftime().
 size_t systime_str(char *buffer, size_t buflen)
 {
+  extern uint32_t board_get_time_s(void);
   time_t seconds1970;
   struct tm now;
-  // HACK 
-  // ptptime_t ptptime;
 
-  // Get the ethernet time values.
-  // ethptp_get_time(&ptptime);
-
-  // Get the seconds since 1970 (Unix epoch).
-  // seconds1970 = (time_t) ptptime.tv_sec;
-  // 2000-01-01 12:00:00 UTC = 946728000 seconds since Unix epoch
-  seconds1970 = (time_t) 946728000;
+  // Get the seconds since 1970 (Unix epoch) from system time.
+  seconds1970 = (time_t)board_get_time_s();
 
   // Break the seconds to a time structure.
   _localtime_r(&seconds1970, &now);
@@ -152,17 +212,12 @@ size_t systime_str(char *buffer, size_t buflen)
 // Create a formatted log time similar to strftime().
 size_t systime_log(char *buffer, size_t buflen)
 {
+  extern uint32_t board_get_time_s(void);
   time_t seconds1970;
   struct tm now;
-  // HACK 
-  // ptptime_t ptptime;
 
-  // Get the ethernet time values.
-  // ethptp_get_time(&ptptime);
-
-  // Get the seconds since 1970 (Unix epoch).
-  // 2000-01-01 12:00:00 UTC = 946728000 seconds since Unix epoch
-  seconds1970 = (time_t) 946728000;
+  // Get the seconds since 1970 (Unix epoch) from system time.
+  seconds1970 = (time_t)board_get_time_s();
 
   // Break the seconds to a time structure.
   _localtime_r(&seconds1970, &now);
@@ -171,24 +226,5 @@ size_t systime_log(char *buffer, size_t buflen)
   // return strftime(buffer, buflen, "%b %e %H:%M:%S ", &now);
   return snoutputf(buffer, buflen, "%s %2d %02d:%02d:%02d ",
                    months[now.tm_mon], now.tm_mday, now.tm_hour, now.tm_min, now.tm_sec);
-}
-
-// Create a RFC5424 timestamp, e.g. 2026-03-01T12:34:56Z
-size_t systime_log_rfc5424(char *buffer, size_t buflen)
-{
-  time_t seconds1970;
-  struct tm now;
-
-  // Get the seconds since 1970 (Unix epoch).
-  // 2000-01-01 12:00:00 UTC = 946728000 seconds since Unix epoch
-  seconds1970 = (time_t) 946728000;
-
-  // Break the seconds to a time structure.
-  _localtime_r(&seconds1970, &now);
-
-  // RFC5424 TIMESTAMP (UTC variant)
-  return snoutputf(buffer, buflen, "%04d-%02d-%02dT%02d:%02d:%02dZ",
-                   1900 + now.tm_year, now.tm_mon + 1, now.tm_mday,
-                   now.tm_hour, now.tm_min, now.tm_sec);
 }
 
