@@ -61,18 +61,16 @@ enum
   SYSLOG_LOCAL7             // local use 7  (local7)
 };
 
-// Syslog severity values.
-enum
-{
-  SYSLOG_LEVEL_EMERGENCY = 0,     // Emergency: system is unusable
-  SYSLOG_LEVEL_ALERT,             // Alert: action must be taken immediately
-  SYSLOG_LEVEL_CRITICAL,          // Critical: critical conditions
-  SYSLOG_LEVEL_ERROR,             // Error: error conditions
-  SYSLOG_LEVEL_WARNING,           // Warning: warning conditions
-  SYSLOG_LEVEL_NOTICE,            // Notice: normal but significant condition
-  SYSLOG_LEVEL_INFO,              // Informational: informational messages
-  SYSLOG_LEVEL_DEBUG              // Debug: debug-level messages
-};
+#ifndef SYSLOG_LEVEL_DEBUG
+#define SYSLOG_LEVEL_EMERGENCY     0
+#define SYSLOG_LEVEL_ALERT         1
+#define SYSLOG_LEVEL_CRITICAL      2
+#define SYSLOG_LEVEL_ERROR         3
+#define SYSLOG_LEVEL_WARNING       4
+#define SYSLOG_LEVEL_NOTICE        5
+#define SYSLOG_LEVEL_INFO          6
+#define SYSLOG_LEVEL_DEBUG         7
+#endif
 
 void syslog_init(void);
 void syslog_clear(void);
